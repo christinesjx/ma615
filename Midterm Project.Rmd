@@ -1,0 +1,270 @@
+---
+title: "Midterm Project"
+author: "Jiaxin(Christine) Sun"
+date: "October 23, 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(choroplethr)
+library(R6)
+library(plotly)
+library(gdata)
+
+```
+
+## Objective
+
+The objective of this project is to implement data cleaning, visualizaiton and analysis on a real set of data and to familiarize ourselves with the process.
+
+## Data Selection
+
+For this project, I use the "County-level Oil and Gas Production in the U.S." as my data set. A brief preview of the data set is shown as the following:
+```{r}
+data1<-read.xls("oilgascounty.xls", sheet=1)
+head(data1)
+dim(data1)
+
+```
+
+As shown in the preview, the data set is relatively messy and there are several things that can be tidied up. For example, redundancies exist in the data set like FIPS and geoid—they are essentially representing the same thing; in addition, data are not organized by year, which makes it hard to manipulate the data of a specific year.
+
+## Data Cleaning
+
+In order to prepare the data for visualization and analysis, I perform a series of steps to clean the data.
+First of all, I performed a common routine to tidy up the basics redundancies.
+The first step will be to getting rid of columns without values:
+```{r}
+data2 <- data1[(colSums(is.na(data1)) != nrow(data1))]
+head(data2)
+dim(data2)
+
+```
+
+From the preview and the dimension of the data before and after cleaning, one can see that there is no column without values.
+
+Then, I delete the cols that only have one value:
+```{r}
+data3<-Filter(function(x)(length(unique(x))>1), data2)
+head(data3)
+dim(data3)
+```
+
+I also delete the cols that have the same value:
+```{r}
+data4<-t(unique(t(data3)))
+data4<-data.frame(data4)
+dim(data4)
+```
+
+To better process the data, I get rid of comma style format(thousands seperator)
+```{r}
+data5<-{
+  data4 %>%
+    mutate_each(funs(as.character(.)), oil2000:gas2011) %>%
+    mutate_each(funs(gsub(",", "", .)), oil2000:gas2011) %>%
+    mutate_each(funs(as.numeric(.)), oil2000:gas2011)}
+head(data5)
+dim(data5)
+```
+
+After the basic cleanings, I continue to tidy up the data by assigning the data types and changing columns to factor as needed.
+
+```{r}
+#factor
+data5$Urban_Influence_2013<-as.factor(data5$Urban_Influence_2013)
+data5$Rural_Urban_Continuum_Code_2013<-as.factor(data5$Rural_Urban_Continuum_Code_2013)
+data5$oil_change_group <- as.factor(data5$oil_change_group) 
+data5$gas_change_group <- as.factor(data5$gas_change_group)
+data5$oil_gas_change_group <- as.factor(data5$oil_gas_change_group)
+
+
+data5$County_Name <- gsub("County", "", data5$County_Name)
+```
+To further clean the data, I clean the rows whose annual gross withdrawals of curde oil and natural gas equals to zero since I will be analyzing the regions with oil and gas outputs. I then also create a subset "value", which only contains data of oil and gas withdrawals. 
+
+```{r}
+nums <- sapply(data5, is.numeric)
+value <- data5[,nums]
+
+x=NULL
+for(i in 1:nrow(value)){
+if(sum(value[i,])==0){x=c(x,i)}}
+
+data6<-data5[-x,]
+head(data6)
+dim(data6)
+```
+
+As mentioned before, oil and gas productions by year are recorded as individual columns such as "oil2001" and "gas2001". I tidy it up by extracting the year and reorganzing the data so that oil and gas only have one column respectively.
+```{r}
+#data frame (tidy data)
+#oil= subset that does not contain gas data
+#gas= subset that does not contain oil data
+oil<- data.frame(subset(data6, select = -c(gas2000:gas2011)))
+gas<- data.frame(subset(data6, select = -c(oil2000:oil2011)))
+
+#reorganizing oil data by year
+oil1 <- oil %>% 
+  gather(Year, oil, oil2000:oil2011)%>%
+  mutate(Year = gsub("oil", "", Year))%>%
+  arrange(County_Name, Year)
+
+#reorganzing gas data by year
+gas1<- gas%>%
+  gather(Year, gas, gas2000:gas2011)%>%
+  mutate(Year = gsub("gas", "", Year))%>%
+  arrange(County_Name, Year)
+
+#merge two data frame, get tidy data
+data_clean<-merge(gas1,oil1)
+```
+The final tidy data looks like the following:
+```{r, echo = FALSE}
+head(data_clean)
+```
+
+##Data Visualization
+With the tidy data, I could do some visualization to get the general idea of the oil and gas production distribution across the U.S. As a start,  I make a Choropleth map of the overall oil and gas productions of the counties from 2001 to 2011.
+
+I start first by combining the oil and gas productions of the 10-year period for each county:
+```{r}
+oilvalue<-value[,1:(length(value)/2)]
+gasvalue<-value[,(length(value)/2+1):length(value)]
+oilsum<-data.frame(rowSums(oilvalue))
+gassum<-data.frame(rowSums(gasvalue))
+colnames(oilsum)[1]<-"value"
+colnames(gassum)[1]<-"value"
+
+
+df <- data1
+aa<-data.frame(subset(df,select = c(1,3,4)))
+colnames(aa)[1]<-'region'
+oilsum<-cbind(aa,oilsum)
+gassum<-cbind(aa,gassum)
+```
+
+I then plot the oil production distribution across the US:
+
+```{r, warning = FALSE}
+oilcho = CountyChoropleth$new(oilsum)
+oilcho$title = "Oil Production across US"
+oilcho$ggplot_scale = scale_fill_brewer(name="Barrel Produced", palette=2, drop=FALSE)
+oilcho$render()
+```
+
+Also the gas prodcution distribution:
+```{r, warning = FALSE}
+gascho = CountyChoropleth$new(gassum)
+gascho$title = "Gas Production across US"
+gascho$ggplot_scale = scale_fill_brewer(name="Barrel Produced", palette=3, drop=FALSE)
+gascho$render()
+```
+
+From the distribution maps, it can be concluded that majority of the oil and gas production comes from the middle part of the U.S.
+
+I also plot the oil and gas production based on different area codes:
+```{r,warning=FALSE}
+#Plot the oil and gas production based on the Metro, Micro, and Noncore statues
+plot_ly(data = data_clean, x = ~Year , y = ~oil, color = ~Metro_Micro_Noncore_2013)
+plot_ly(data = data_clean, x = ~Year , y = ~gas, color = ~Metro_Micro_Noncore_2013)
+plot_ly(data = data_clean, x = ~Year , y = ~oil, color = ~Rural_Urban_Continuum_Code_2013)
+plot_ly(data = data_clean, x = ~Year , y = ~gas, color = ~Rural_Urban_Continuum_Code_2013)
+```
+
+The mean and standard deviation can be better visualized in the box plots:
+```{r,warning=FALSE}
+
+#Plot the oil and gas production based on Rural Urban Continuum Code 2013
+#
+plot_ly(data=data_clean, y = ~oil, color = ~Rural_Urban_Continuum_Code_2013, type = "box")
+plot_ly(data=data_clean, y = ~gas, color = ~Rural_Urban_Continuum_Code_2013, type = "box")
+
+plot_ly(data=data_clean, y = ~oil, color = ~Metro_Micro_Noncore_2013, type = "box")
+plot_ly(data=data_clean, y = ~gas, color = ~Metro_Micro_Noncore_2013, type = "box")
+```
+
+After seeing the productions distribution among areas, I continue to visualize the data with time series scatter plot to see the production trend over the 12-year period.
+```{r, warning=FALSE}
+#scatter plot (x=year, y=sum(value))
+#oil hyperbola trend, gas increasing trend
+op<-data.frame(colSums(oilvalue))
+op$oil<-op$colSums.oilvalue.
+op$Year<- c(2000:2011)
+og<-data.frame(colSums(gasvalue))
+og$gas<-og$colSums.gasvalue.
+og$Year<- c(2000:2011)
+plot_ly(op, x=~Year, y=~oil, type = "scatter")
+plot_ly(og, x=~Year, y=~gas, type = "scatter")
+```
+
+Finally we can look at which state produces the most oil and gas
+```{r, warning=FALSE}
+#which state produce the most?
+plot_ly(data_clean, x=~ Stabr, y=~ oil)
+plot_ly(data_clean, x=~ Stabr, y=~ gas)
+```
+
+##Analysis
+
+For analysis, we can start by seeing the summary of tidy data of the oil and gas individually.
+```{r, warning= FALSE}
+#summary 
+summary(data_clean$oil)
+summary(data_clean$gas)
+```
+
+From the plots in the Data Visualization section, it can be seen that there are outliers in the data, making it hard for us to see the distribution among areas. Therefore, I use the following code to remove the outliers in the data set.
+```{r, warning= FALSE}
+#remove outlier
+#reference: https://www.r-bloggers.com/identify-describe-plot-and-remove-the-outliers-from-the-dataset/
+outlierKD <- function(dt, var) {
+  var_name <- eval(substitute(var),eval(dt))
+  na1 <- sum(is.na(var_name))
+  m1 <- mean(var_name, na.rm = T)
+  par(mfrow=c(2, 2), oma=c(0,0,3,0))
+  boxplot(var_name, main="With outliers")
+  hist(var_name, main="With outliers", xlab=NA, ylab=NA)
+  outlier <- boxplot.stats(var_name)$out
+  mo <- mean(outlier)
+  var_name <- ifelse(var_name %in% outlier, NA, var_name)
+  boxplot(var_name, main="Without outliers")
+  hist(var_name, main="Without outliers", xlab=NA, ylab=NA)
+  title("Outlier Check", outer=TRUE)
+  na2 <- sum(is.na(var_name))
+  cat("Outliers identified:", na2 - na1)
+  m2 <- mean(var_name, na.rm = T)
+  dt[as.character(substitute(var))] <- invisible(var_name)
+  assign(as.character(as.list(match.call())$dt), dt, envir = .GlobalEnv)
+  return(invisible(dt))
+}
+
+no_outlier<-data_clean
+no_outlier<-outlierKD(no_outlier, oil)
+no_outlier<-outlierKD(no_outlier, gas)
+no_outlier[no_outlier == 0 & is.numeric(no_outlier)] <- NA
+```
+
+I then use the data set without outlier to replot the plots in the previous section:
+```{r, warning= FALSE}
+#Plot the oil production based on the Metro, Micro, and Noncore statues
+plot_ly(data = data_clean, x = ~Year , y = ~oil, color = ~Metro_Micro_Noncore_2013)
+plot_ly(data = no_outlier, x = ~Year , y = ~oil, color = ~Metro_Micro_Noncore_2013)
+
+plot_ly(data = data_clean, x = ~Year , y = ~gas, color = ~Metro_Micro_Noncore_2013)
+plot_ly(data = no_outlier, x = ~Year , y = ~gas, color = ~Metro_Micro_Noncore_2013)
+
+
+#Plot the oil and gas production based on Rural Urban Continuum Code 2013
+#
+plot_ly(data=no_outlier, y = ~oil, color = ~Rural_Urban_Continuum_Code_2013, type = "box")
+plot_ly(data=no_outlier, y = ~gas, color = ~Rural_Urban_Continuum_Code_2013, type = "box")
+
+plot_ly(data=no_outlier, y = ~oil, color = ~Metro_Micro_Noncore_2013, type = "box")
+plot_ly(data=no_outlier, y = ~gas, color = ~Metro_Micro_Noncore_2013, type = "box")
+```
